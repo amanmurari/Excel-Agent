@@ -1,4 +1,4 @@
-# 📊 ExcelAI Agent (Dashbord)
+# ExcelAI Agent (Dashbord)
 
 > **Your Autonomous Financial Analyst & Data Scientist inside Excel.**
 
