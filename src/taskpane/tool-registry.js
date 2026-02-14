@@ -337,7 +337,7 @@ const TOOL_REGISTRY = {
 
     applyFormulaToColumn: {
         name: "applyFormulaToColumn",
-        description: "Applies a formula to an entire new column, automatically filling it down to match the data height. Use this for creating new metrics, splitting text, or unit conversions.",
+        description: "Applies a formula to an entire new column, automatically filling it down to match the data height. Use this for creating new metrics, splitting text, or unit conversions. Supports custom header via 'headerName'.",
         parameters: {
             type: "object",
             properties: {
@@ -348,6 +348,10 @@ const TOOL_REGISTRY = {
                 targetColumn: {
                     type: "string",
                     description: "The letter of the new column to create (e.g., 'M', 'Z')"
+                },
+                headerName: {
+                    type: "string",
+                    description: "The name for the new column header (e.g., 'Daily Price Change', 'Revenue Growth'). Recommended to provide a clear, descriptive name."
                 }
             },
             required: ["formula", "targetColumn"]

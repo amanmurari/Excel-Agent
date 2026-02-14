@@ -488,7 +488,7 @@ RETURN JSON FORMAT (MANDATORY):
     /**
      * Apply a formula to an entire column
      */
-    async applyFormulaToColumn(formula, targetColumn, sourceColumnForHeight = "A") {
+    async applyFormulaToColumn(formula, targetColumn, sourceColumnForHeight = "A", headerName = null) {
         console.log(`[DashboardAnalyzer] Applying formula ${formula} to column ${targetColumn}`);
 
         // Guardrail: Prevent Table Structured References
@@ -497,8 +497,14 @@ RETURN JSON FORMAT (MANDATORY):
         }
 
         // Guardrail: Validate Target Column is a specific letter (e.g. "M", not "New Column")
-        if (!targetColumn.match(/^[A-Za-z]{1,3}$/)) {
-            throw new Error(`Parameter Error: 'targetColumn' must be a valid Excel Column LETTER (e.g. 'M', 'AA'), not a name like "${targetColumn}". Please check the available workspace and pick an empty column letter.`);
+        if (!targetColumn || typeof targetColumn !== 'string' || !targetColumn.match(/^[A-Za-z]{1,3}$/)) {
+            throw new Error(`Parameter Error: 'targetColumn' must be a valid Excel Column LETTER (e.g. 'M', 'AA'), not "${targetColumn}". Please check the generated plan.`);
+        }
+
+        // Guardrail: Validate Source Column
+        if (!sourceColumnForHeight || typeof sourceColumnForHeight !== 'string' || !sourceColumnForHeight.match(/^[A-Za-z]{1,3}$/)) {
+            console.warn(`[DashboardAnalyzer] Invalid sourceColumnForHeight: "${sourceColumnForHeight}". Defaulting to "A".`);
+            sourceColumnForHeight = "A";
         }
 
         return await Excel.run(async (context) => {
@@ -519,9 +525,10 @@ RETURN JSON FORMAT (MANDATORY):
                 return { status: "error", message: "No data found to apply formula against." };
             }
 
-            // 2. Set header
+            // 2. Set header with custom name if provided
             const headerCell = sheet.getRange(`${targetColumn}1`);
-            headerCell.values = [[`Calc_${targetColumn}`]];
+            const finalHeader = headerName || `Calc_${targetColumn}`;
+            headerCell.values = [[finalHeader]];
             headerCell.format.font.bold = true;
 
             // 3. Set formula in first cell and autofill

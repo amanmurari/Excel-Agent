@@ -172,122 +172,54 @@ class AutonomousExcelAgent extends DashboardAnalyzer {
 
     async analyzeIntent(userQuery) {
 
-        const prompt = `You are a World-Class Strategy Consultant and Data Scientist (McKinsey/BCG level). 
-
-Analyze the user's query with extreme professional depth.
-
-
+        const prompt = `You are a World-Class Strategy Consultant and Data Scientist (McKinsey/BCG level).
+Global Objective: Analyze the user's intent with extreme professional depth.
 
 USER QUERY: "${userQuery}"
 
-
-
-YOUR MISSION:
-
-1.  **Deconstruct Intent**: Separate explicit requests from underlying business objectives.
-
-2.  **Implicit Value-Add**: Identify what the user *actually* needs to make a data-driven decision, even if they didn't ask for it.
-
-3.  **Risk Assessment**: Identify potential issues with the data or request (e.g., sample size, bias, missing dimensions).
-
-4.  **Strategic Context**: How does this request move the needle? (Growth, Efficiency, Risk Mitigation).
-
-
-
 INTENT CATEGORIES:
-
-- analyze_data: Strategic performance deep-dive
-
-- create_chart: High-impact visualization for stakeholders
-
-- clean_data: Data hygiene and structural optimization (Use FORMULAS for splitting/transforming)
-
-- create_dashboard: Executive-level visual command center
-
-- find_insights: Investigating specific business hypotheses
-
-- calculate: Advanced metric engineering (Use applyFormulaToColumn)
-
-- format: Professional report styling and conditional logic
-
-- filter_sort: Segmentation and priority ranking
-
-- comparable_analysis: Valuation using trading multiples (EV/Revenue, EV/EBITDA, P/E)
-
-- precedent_transactions: M&A deal analysis and transaction multiples
-
-- dcf_valuation: Discounted cash flow modeling and enterprise valuation
-
-- lbo_analysis: Leveraged buyout scenario analysis with IRR/MOIC
-
-- three_statement_model: Integrated financial model building (P&L, Balance Sheet, Cash Flow)
-
-- financial_benchmarking: Peer comparison and percentile ranking
-
-- historical_financials: Multi-year financial aggregation with growth rates and margins
-
-- financial_ratios: Comprehensive ratio analysis (profitability, liquidity, leverage, efficiency)
-
-- custom: Complex multi-stage strategic initiatives
-
-
+- analyze_data: Data analysis or insights
+- create_chart: Create visualization
+- clean_data: Clean, transform, or fix data (splitting, deduplication, formatting)
+- create_dashboard: Build multi-chart dashboard
+- find_insights: Answer specific question about data
+- calculate: Compute metrics or add calculated columns
+- format: Style or format cells
+- filter_sort: Filter or sort data
+- comparable_analysis: Trading multiples / comparable company analysis
+- precedent_transactions: M&A deal analysis
+- dcf_valuation: DCF modeling
+- lbo_analysis: LBO scenario analysis
+- three_statement_model: Integrated financial model
+- financial_benchmarking: Peer comparison
+- historical_financials: Multi-year financial aggregation
+- financial_ratios: Ratio analysis
+- custom: Multi-stage or complex operations
 
 Respond in JSON ONLY:
-
 {
-
-  "intent": "category",
-
-  "businessObjective": "The 'why' behind the request",
-
-  "implicitNeeds": ["strategic requirements needed for excellence"],
-
+  "intent": "category from above",
+  "businessObjective": "Executive Summary of user goal",
   "confidence": "high/medium/low",
-
-  "expertObservations": ["Crucial things a junior analyst would miss"],
-
-  "entities": {
-
-    "dataRange": "EXACT address or 'selection'",
-
-    "targetAudience": "Executive/Operational/Technical",
-
-    "keyMetrics": ["KPIs involved"]
-
+  "details": {
+     "dataRange": "EXACT address or 'selection'",
+     "keyMetrics": ["relevant columns or KPIs"],
+     "implicitNeeds": ["What user didn't say but needs"]
   },
+  "expertObservations": "Strategic context",
+  "reasoning": "Brief classification explanation"
+}`;
 
-  "reasoning": "Step-by-step logical deconstruction of the query",
-
-  "suggestedFocus": "Where the agent should focus its deepest analysis"
-
-}
-
-
-
-Stay professional. Be the expert. Don't be afraid to recommend complex multi-sheet solutions.`;
-
-
-
-        const systemPrompt = "You are a World-Class Data Consultant. Provide deep, strategic intent analysis. Return only valid JSON.";
-
-
+        const systemPrompt = "You are an Excel AI agent. Classify intent accurately. Return only valid JSON.";
 
         const response = await this.callClaudeAPI(prompt, systemPrompt);
-
         const intent = this.extractJSON(response);
 
-
-
         if (!intent || !intent.intent) {
-
             throw new Error(`Failed to analyze user intent. Agent response: ${response.substring(0, 100)}...`);
-
         }
 
-
-
         return intent;
-
     }
 
 
@@ -300,49 +232,17 @@ Stay professional. Be the expert. Don't be afraid to recommend complex multi-she
 
     async generateExpertReflection(query, results) {
 
-        const prompt = `You are a World-Class Strategy Consultant (McKinsey/BCG level). You have just concluded a high-stakes Excel automation and analysis project.
-
-
-
-PROJECT CONTEXT:
+        const prompt = `Summarize the completed Excel automation project.
 
 User Query: "${query}"
+Results: ${JSON.stringify(results, null, 2)}
 
-Execution Results & Data Observations:
+Provide a concise Markdown summary with:
+1. **What was done**: Brief statement of operations performed
+2. **Key Findings**: Data insights from the results (if any)
+3. **Recommendations**: 2-3 actionable next steps
 
-${JSON.stringify(results, null, 2)}
-
-
-
-YOUR TASK:
-
-Generate an Executive Project Briefing in Markdown. You must provide deep, non-obvious value.
-
-
-
-STRUCTURE:
-
-1.  **Executive Summary**: A high-impact statement of what was achieved and why it matters.
-
-2.  **Strategic Data Insights**: 
-
-    - Go beyond "What": Explain "Why" and "So What".
-
-    - Identify key value drivers, risks, or performance anomalies.
-
-3.  **Business Recommendations**: 
-
-    - Provide 3-5 specific, actionable strategic moves the user should consider based on this data.
-
-4.  **Operational Next Steps**: 
-
-    - How should the user maintain or expand this analysis?
-
-
-
-TONE:
-
-Professional, authoritative, insightful, and strategic. Avoid generic praise. Focus on data-driven truth.`;
+Be concise and data-driven.`;
 
 
 
@@ -376,120 +276,98 @@ Professional, authoritative, insightful, and strategic. Avoid generic praise. Fo
 
     async createExecutionPlan(intent, userQuery) {
         // Get current Excel context
+        // Get current Excel context but limit size for prompt
         const context = await this.getExcelContext();
-        const contextStr = JSON.stringify(context, null, 2);
+
+        // Truncate large datasets to prevent token overflow
+        const contextForPrompt = { ...context };
+        if (contextForPrompt.values && Array.isArray(contextForPrompt.values) && contextForPrompt.values.length > 50) {
+            contextForPrompt.values = contextForPrompt.values.slice(0, 50);
+            contextForPrompt.note = `Data truncated for analysis. Showing first 50 of ${context.values.length} rows.`;
+        }
+
+        const contextStr = JSON.stringify(contextForPrompt, null, 2);
 
         const toolDescriptions = getToolDescriptionsForPrompt();
-        const prompt = `You are the Lead Solutions Architect for Excel Automation. Your goal is to deliver "Boardroom-Ready" analytical dashboards using a "Formula-First" methodology.
 
-═══════════════════════════════════════════════════════════
-CURRENT EXCEL CONTEXT
-═══════════════════════════════════════════════════════════
-You have access to the following workbook state. USE THIS to ensure your column names and sheet references are 100% accurate.
-${contextStr}
+        // Only include financial workflows if the intent is financial
+        const financialIntents = ['comparable_analysis', 'precedent_transactions', 'dcf_valuation', 'lbo_analysis', 'three_statement_model', 'financial_benchmarking', 'historical_financials', 'financial_ratios'];
+        const isFinancial = financialIntents.includes(intent.intent);
 
-═══════════════════════════════════════════════════════════
-COMMANDER'S INTENT & GUIDELINES
-═══════════════════════════════════════════════════════════
-1. **Never Plot Raw Data**: Only juniors create charts from 5,000 rows of raw data. A Senior Architect ALWAYS aggregates data into summary tables first.
-2. **Formula-First Engine**: Use \`createMetricTable\` for summaries and \`applyFormulaToColumn\` for transformations (e.g., splitting text, unit conversions).
-3. **Avoid JS Looping**: Do NOT use \`cleanData\` for row-by-row operations. Use \`applyFormulaToColumn\` with Excel formulas (e.g. \`=TEXTSPLIT(A2, " ")\` or \`=A2*1.5\`) for instant, scalable results.
-4. **Formula Syntax**: NEVER use Table References (e.g. \`[@Column]\`). ALWAYS use standard cell references (e.g. \`A2\`, \`B2\`) assuming data starts at row 2.
-5. **Workspace Discipline**: Start every dashboard by using \`insertColumns\` (e.g., column P onwards) to create a dedicated analysis zone.
-6. **Visual Excellence**: Charts must reference the summary tables from Step X. Use evocative, professional titles.
-7. **Sheet Hygiene**: ALWAYS specify sheet names in your ranges (e.g., "${context.activeSheet}!A1:B10").
-
+        let financialSection = '';
+        if (isFinancial) {
+            financialSection = `
 ═══════════════════════════════════════════════════════════
 FINANCIAL ANALYSIS WORKFLOWS
 ═══════════════════════════════════════════════════════════
-When users request valuation or financial modeling work, follow these professional standards:
+- Comparable Company: Use \`calculateComparableCompanyMultiples\` for EV/Revenue, EV/EBITDA, P/E multiples
+- DCF: Use \`buildHistoricalFinancials\` → \`buildThreeStatementModel\` → \`buildDCFModel\`
+- LBO: Use \`buildLBOModel\` with entry assumptions and exit scenarios
+- Precedent Transactions: Use \`analyzePrecedentTransactions\` for deal multiples
+- Three-Statement: Use \`buildThreeStatementModel\` for integrated P&L, BS, CF projections
+- Benchmarking: Use \`benchmarkAgainstPeers\` for percentile rankings
+- All financial models use Excel formulas for auditability.
+`;
+        }
 
-**1. Comparable Company Analysis Workflow:**
-   - Validate data completeness (Market Cap, Enterprise Value, Revenue, EBITDA, Net Income)
-   - Use \`calculateComparableCompanyMultiples\` to compute EV/Revenue, EV/EBITDA, P/E, EV/FCF
-   - Tool creates summary statistics (Min/Max/Median/Mean) automatically
-   - Always place output on active sheet for easy reference
+        const prompt = `You are an Excel Solutions Architect. Create a formula-first execution plan.
 
-**2. DCF Valuation Workflow:**
-   - Step 1: Gather or build historical financials with \`buildHistoricalFinancials\`
-   - Step 2: Create projections (manually or with \`buildThreeStatementModel\`)
-   - Step 3: Build DCF with \`buildDCFModel\` including sensitivity analysis
-   - Output: Enterprise value, equity value, price per share range
-
-**3. LBO Analysis Workflow:**
-   - Gather entry assumptions (purchase multiple, debt/equity mix, interest rate)
-   - Input 5-year projected EBITDA and free cash flows
-   - Use \`buildLBOModel\` to calculate sources & uses, debt paydown, IRR/MOIC
-   - Test multiple exit scenarios (7x, 8x, 9x, 10x EBITDA)
-
-**4. Precedent Transactions:**
-   - Organize transaction data chronologically
-   - Use \`analyzePrecedentTransactions\` to calculate deal multiples
-   - Identify trends over time and weight recent transactions more heavily
-
-**5. Three-Statement Model:**
-   - Start with historical data for 3-5 years
-   - Define assumptions (revenue growth, margins, capex, working capital)
-   - Use \`buildThreeStatementModel\` to create integrated projections
-   - Link Income Statement → Balance Sheet → Cash Flow Statement
-
-**6. Financial Benchmarking:**
-   - Gather target company metrics and peer group data
-   - Use \`benchmarkAgainstPeers\` for percentile rankings
-   - Identify areas of outperformance/underperformance vs. median
-
-**KEY PRINCIPLE**: All financial models use Excel formulas for auditability and dynamic updates.
+STRATEGIC CONSTRAINT: Work on the ACTIVE SHEET only. Do not create new sheets or switch sheets unless explicitly requested.
 
 ═══════════════════════════════════════════════════════════
-AVAILABLE ARCHITECTURAL TOOLS
+EXCEL CONTEXT
+═══════════════════════════════════════════════════════════
+${contextStr}
+
+═══════════════════════════════════════════════════════════
+GUIDELINES
+═══════════════════════════════════════════════════════════
+1. **Formula-First**: Use \`createMetricTable\` for summaries, \`applyFormulaToColumn\` for transformations. Avoid \`cleanData\` for row-by-row ops.
+2. **No Table References**: Use standard cell references (A2, B2), not [@Column].
+3. **Aggregate Before Charting**: Always create summary tables before charts.
+4. **Sheet Names**: Include sheet names in ranges (e.g., "${context.activeSheet}!A1:B10").
+5. **Data starts at row 2** (row 1 = headers).
+6. **Single Sheet Focus**: Output results to the active sheet (e.g., columns M+ or relevant empty space) rather than creating new sheets.
+${financialSection}
+═══════════════════════════════════════════════════════════
+AVAILABLE TOOLS
 ═══════════════════════════════════════════════════════════
 ${toolDescriptions}
 
 ═══════════════════════════════════════════════════════════
-STRATEGIC CONTEXT
+USER QUERY & DATA
 ═══════════════════════════════════════════════════════════
-User Query: "${userQuery}"
-Current Worksheet: ${JSON.stringify(context, null, 2)}
-
-═══════════════════════════════════════════════════════════
-VERIFIED DATA HEADERS (MANDATORY REFERENCE)
-═══════════════════════════════════════════════════════════
-The following headers are the ONLY valid columns in the source data.
-NEVER hypothesize or use standard dataset headers (like "Asset Name") if they are not listed here:
-${JSON.stringify(context.headers)}
-
+Query: "${userQuery}"
+Headers: ${JSON.stringify(context.headers)}
 Data Sample:
 ${this.formatDataForAI(context.dataSample, context.address)}
 
 ═══════════════════════════════════════════════════════════
-PLAN ARCHITECTURE (MANDATORY STEPS)
-═══════════════════════════════════════════════════════════
-Output valid JSON following the Elite Execution Plan format:
-
-═══════════════════════════════════════════════════════════
-PLAN FORMAT (JSON ONLY)
+OUTPUT FORMAT (JSON ONLY)
 ═══════════════════════════════════════════════════════════
 {
-  "title": "Elite Business Solution Name",
-  "summary": "High-level strategic narrative of the solution",
+  "title": "Plan Title",
+  "summary": "What this plan does",
   "steps": [
     {
       "step": 1,
-      "thought": "McKinsey-level reasoning about why this step is necessary",
-      "description": "Professional technical operation details",
+      "thought": "Why this step is needed",
+      "description": "What this step does",
       "method": "toolName",
       "parameters": { 
-        "dataRange": "selection" or "result from step X" or "SheetName!A1:B10",
-        ... other params 
+        "dataRange": "SheetName!A1:B10" or "selection" or "result from step X",
+        ... 
       },
-      "rationale": "Strategic business value of this step",
+      "rationale": "Business value",
       "critical": true
     }
   ],
-  "expectedOutcome": "Final professional result description"
+  "expectedOutcome": "Final result description"
 }
 
-Think like a Senior Architect. Output valid JSON.`;
+Output valid JSON only.`;
+
+
 
 
 
@@ -505,7 +383,7 @@ Think like a Senior Architect. Output valid JSON.`;
 
         if (!plan || !plan.steps) {
 
-            throw new Error(`Failed to create execution plan. Help the user understand what happened.`);
+            throw new Error(`Failed to create execution plan.Help the user understand what happened.`);
 
         }
 
@@ -596,11 +474,11 @@ Think like a Senior Architect. Output valid JSON.`;
 
         console.log("📋 Execution Plan:");
 
-        console.log(`Summary: ${plan.summary}`);
+        console.log(`Summary: ${plan.summary} `);
 
-        console.log(`Total Steps: ${plan.steps.length}`);
+        console.log(`Total Steps: ${plan.steps.length} `);
 
-        console.log(`Estimated Time: ${plan.estimatedTotalTime || 'unknown'}`);
+        console.log(`Estimated Time: ${plan.estimatedTotalTime || 'unknown'} `);
 
 
 
@@ -610,7 +488,7 @@ Think like a Senior Architect. Output valid JSON.`;
 
             const actionText = step.description || step.action || "Executing step";
 
-            console.log(`  ${stepNum}. ${actionText}`);
+            console.log(`  ${stepNum}. ${actionText} `);
 
         });
 
@@ -672,9 +550,9 @@ Think like a Senior Architect. Output valid JSON.`;
 
                 const thoughtMsg = retryCount > 0
 
-                    ? `🔄 Retry ${retryCount}: ${step.thought}`
+                    ? `🔄 Retry ${retryCount}: ${step.thought} `
 
-                    : `💭 Thought: ${step.thought}`;
+                    : `💭 Thought: ${step.thought} `;
 
 
 
@@ -1032,41 +910,7 @@ AVAILABLE TOOLS (with new additions)
 
 ═══════════════════════════════════════════════════════════
 
-1. analyzeData - Comprehensive analysis
-
-2. createChart - Single chart (params: dataRange, chartType, title, xAxis, yAxis)
-
-3. generateDashboard - Complete dashboard with multiple charts
-
-4. cleanData - Transform/clean data (params: instructions)
-
-5. calculateMetric - Calculate custom metrics (params: metric)
-
-6. findInsights - Answer questions (params: question)
-
-7. formatData - Apply formatting (params: range, formatting)
-
-8. createSummary - Generate summary sheet
-
-9. generateFormula - Create formula (params: description, address)
-
-10. createPivot - Pivot table (params: rows, columns, values)
-
-11. insertFormula - Insert formula (params: address, formula)
-
-12. createSheet - New worksheet (params: name)
-
-13. writeData - Write values (params: address, data)
-
-14. filterData - Filter rows (params: column, operator, value) [NEW]
-
-15. sortData - Sort data (params: columns, order) [NEW]
-
-16. mergeData - Combine ranges (params: ranges, mergeType) [NEW]
-
-17. validateData - Check quality (params: rules) [NEW]
-
-18. exportToNewSheet - Copy to new sheet (params: data, sheetName) [NEW]
+${getToolDescriptionsForPrompt()}
 
 
 
@@ -1216,6 +1060,11 @@ OR (if replanning):
 
         let method = step.method;
 
+        // Guard: missing method
+        if (!method || typeof method !== 'string') {
+            throw new Error(`Step is missing a valid 'method'. Step description: "${step.description || step.action || 'unknown'}"`);
+        }
+
         let params = step.parameters || {};
 
 
@@ -1258,8 +1107,12 @@ OR (if replanning):
 
                             params[key] = prevStep.result.values || prevStep.result.summary || prevStep.result.data;
 
+                        } else {
+                            console.warn(`[Agent] Step ${targetStepNum} result has no usable address/data. Keeping original reference: "${params[key]}"`);
                         }
 
+                    } else {
+                        console.warn(`[Agent] Referenced step ${targetStepNum} not found or has no result. Keeping original: "${params[key]}"`);
                     }
 
                 }
@@ -1460,7 +1313,7 @@ OR (if replanning):
 
             // Check if it's the specific column tool
             if (normalizedMethod === 'applyformulatocolumn' || (params.targetColumn && params.formula)) {
-                return await this.applyFormulaToColumn(params.formula, params.targetColumn, params.sourceColumnForHeight || "A");
+                return await this.applyFormulaToColumn(params.formula, params.targetColumn, params.sourceColumnForHeight || "A", params.headerName);
             }
 
             let targetAddress = params.address || params.range || "selection";
@@ -1478,21 +1331,6 @@ OR (if replanning):
         }
 
         if (normalizedMethod === 'createpivot') return await this.createPivotAnalysis(params);
-
-        if (normalizedMethod === 'createmetrictable' || normalizedMethod === 'summarytable') {
-            const dataRange = params.dataRange || params.address || "selection";
-            return await this.createMetricTable(
-                dataRange,
-                params.categoryColumn,
-                params.metricColumn,
-                params.aggregation || "Count",
-                params.targetCell || "P1"
-            );
-        }
-
-        if (normalizedMethod === 'insertcolumns' || normalizedMethod === 'addcolumns') {
-            return await this.insertColumns(params.address || "P:P", params.count || 1);
-        }
 
         if (normalizedMethod === 'createsheet' || normalizedMethod === 'addsheet') return await this.createNewSheet(params.name || params.sheetName);
 
@@ -1592,6 +1430,12 @@ OR (if replanning):
 
             return await this.createScenario(params.scenarioName, params.changes);
 
+        }
+
+        // Handle sheet activation gracefully (even if hallucinated)
+        if (normalizedMethod === 'activatesheet' || normalizedMethod === 'gotosheet' || normalizedMethod === 'selectsheet') {
+            console.log(`[Agent] Handling activateSheet request for: ${params.sheetName || params.name}. Staying on active sheet as per policy.`);
+            return { success: true, message: `Active sheet confirmed: ${params.sheetName || "current"}` };
         }
 
         // ============================================
@@ -2056,9 +1900,9 @@ Return JSON:
 
 
     /**
-
+    
      * Extract numbers from text
-
+    
      */
 
     extractNumber(text) {

@@ -3,7 +3,7 @@ class ExcelAIAssistant {
   constructor(apiKey) {
     this.apiKey = apiKey;
     this.claudeApiUrl = 'https://openrouter.ai/api/v1/chat/completions';
-    this.model = 'google/gemini-2.5-flash';
+    this.model = 'anthropic/claude-sonnet-4.5';
   }
 
 
@@ -240,7 +240,7 @@ class ExcelAIAssistant {
       throw new Error(`Invalid range string provided: ${rangeString}`);
     }
 
-    const cleanRange = this.sanitizeRangeString(rangeString.trim());
+    let cleanRange = this.sanitizeRangeString(rangeString.trim());
 
     // 0. Handle "selection" keyword
     if (cleanRange.toLowerCase() === 'selection') {
@@ -253,7 +253,10 @@ class ExcelAIAssistant {
       // Check if the method exists (some older environments might not have it on workbook)
       if (typeof context.workbook.getRange === 'function') {
         const range = context.workbook.getRange(cleanRange);
-        // We MUST return the range object directly to the Excel.run caller
+        // We MUST sync here to verify the range is valid before returning.
+        // If INVALID, this sync throws, we catch it, and fall back to manual parsing.
+        range.load("address");
+        await context.sync();
         return range;
       }
     } catch (e) {
@@ -448,6 +451,14 @@ class ExcelAIAssistant {
       if (Array.isArray(metricColumn)) metricColumn = metricColumn[0];
       if (Array.isArray(aggregation)) aggregation = aggregation[0];
 
+      // Handle comma-separated strings (AI fallback)
+      if (typeof categoryColumn === 'string' && categoryColumn.includes(',')) categoryColumn = categoryColumn.split(',')[0].trim();
+      if (typeof metricColumn === 'string' && metricColumn.includes(',')) metricColumn = metricColumn.split(',')[0].trim();
+
+      // Handle "null" string from AI (often means "use first column")
+      if (categoryColumn === "null" || !categoryColumn) categoryColumn = headers[0];
+      if (metricColumn === "null" || !metricColumn) metricColumn = headers[1] || headers[0];
+
       const targetRange = await this.getRangeFromString(context, targetCell);
       const sheet = targetRange.worksheet;
       const sourceSheet = sourceRange.worksheet;
@@ -456,6 +467,12 @@ class ExcelAIAssistant {
       sheet.load("name");
       sourceSheet.load("name");
       await context.sync();
+
+      await context.sync();
+
+      if (!sourceRange.values || sourceRange.values.length === 0) {
+        throw new Error("Source range is empty or invalid. Cannot create metric table.");
+      }
 
       const headers = sourceRange.values[0];
 
@@ -575,11 +592,34 @@ class ExcelAIAssistant {
 
       await context.sync();
 
-      // 5. Final Formatting
-      // We don't know the exact size of the spilled range yet, let's auto-fit the columns
-      targetRange.getResizedRange(0, 1).getEntireColumn().format.autofitColumns();
+      // 5. Final Formatting & Address Calculation
+      // Determine the full range of the table (Header + Data)
+      // We use the spilled range property to find exact height
+      const spilledData = uniqueCell.getSpillingToRangeOrNullObject();
+      spilledData.load(["rowCount", "address"]);
+      await context.sync();
 
-      const fullTableAddress = `${targetRange.address}:${aggCell.address}#`;
+      let fullTableAddress;
+      if (spilledData.isNullObject) {
+        // Fallback if not spilling (single row result)
+        // Table is Header (1 row) + Data (1 row) = 2 rows
+        const fullRange = targetRange.getResizedRange(1, 1);
+        fullRange.load("address");
+        fullRange.format.autofitColumns();
+        await context.sync();
+        fullTableAddress = fullRange.address;
+        console.warn("[ExcelAIAssistant] Metric table did not spill as array. Returning static range.");
+      } else {
+        // Table height = 1 (header) + spilled rows
+        const dataRows = spilledData.rowCount;
+        // Resize targetRange (1x1) to cover (1+dataRows) x 2 columns
+        const fullRange = targetRange.getResizedRange(dataRows, 1);
+        fullRange.load("address");
+        fullRange.format.autofitColumns();
+        await context.sync();
+        fullTableAddress = fullRange.address;
+      }
+
       console.log(`[ExcelAIAssistant] createMetricTable complete at ${fullTableAddress}`);
 
       return {
@@ -856,15 +896,26 @@ IMPORTANT:
 
     // Parse result back to 2D array
     const cleanedData = this.parseAIDataResponse(result);
-
     return cleanedData;
   }
 
   /**
-   * Apply cleaned data back to Excel
-   */
+ * Apply cleaned data back to Excel
+ */
   async applyCleanedData(instructions, address = null) {
-    const cleanedData = await this.cleanData(instructions, address);
+    let cleanedData;
+    try {
+      cleanedData = await this.cleanData(instructions, address);
+    } catch (error) {
+      console.error('[Agent] cleanData failed:', error);
+      return { success: false, error: `Data cleaning failed: ${error.message}` };
+    }
+
+    // Validate result is usable
+    if (!cleanedData || !Array.isArray(cleanedData) || cleanedData.length === 0) {
+      console.warn('[Agent] cleanData returned empty or invalid data. Skipping write.');
+      return { success: false, error: 'Data cleaning returned no usable data. Try a more specific instruction.' };
+    }
 
     // If we have a specific address, write back to it, otherwise write to selection
     if (address) {
@@ -992,28 +1043,67 @@ IMPORTANT:
    * Create a chart from a data range
    */
   async createChart(sourceRange, chartType, title, xAxisTitle = "", yAxisTitle = "") {
+    console.log(`[ExcelAIAssistant] createChart called with: range="${sourceRange}", type="${chartType}", title="${title}"`);
+
+    // 1. Validation: Range
+    if (!sourceRange || typeof sourceRange !== 'string' || sourceRange.trim() === "") {
+      console.error(`[ExcelAIAssistant] Invalid sourceRange for chart: ${sourceRange}`);
+      throw new Error(`Cannot create chart: Source range is missing or invalid. Received: "${sourceRange}"`);
+    }
+
+    // 2. Validation: Chart Type
+    if (!chartType || typeof chartType !== 'string') {
+      console.warn(`[ExcelAIAssistant] Invalid chartType: ${chartType}. Defaulting to "Column".`);
+      chartType = "Column";
+    }
+
     return await Excel.run(async (context) => {
       // Support absolute addresses with sheet names or local ones
-      // 1. Resolve range
+      // 3. Resolve range
       let cleanSource = sourceRange;
       let isSpilled = false;
-      if (typeof cleanSource === 'string' && cleanSource.endsWith('#')) {
+      if (cleanSource.endsWith('#')) {
         isSpilled = true;
         cleanSource = cleanSource.slice(0, -1);
       }
 
-      const range = await this.getRangeFromString(context, cleanSource);
+      let range;
+      try {
+        range = await this.getRangeFromString(context, cleanSource);
+      } catch (rangeError) {
+        console.error(`[ExcelAIAssistant] Failed to resolve range "${cleanSource}"`, rangeError);
+        throw new Error(`Chart Creation Failed: The range "${sourceRange}" could not be found. Please clean or select valid data.`);
+      }
 
-      // Load and sync to ensure range is valid and we have dimensions
-      range.load(["address", "rowCount", "columnCount"]);
-      await context.sync();
-
-      // Handle spilled range expansion
-      let plotRange = range;
+      // Robust Spill Handling: If range ends with #, expand to full spilled array
       if (isSpilled) {
-        plotRange = range.getSpillingToParent(); // Or similar if available, or just use the range with #
-        // Note: In Office.js, if you pass a range to charts.add, it should handle it.
-        // If range is a single cell and we know it spills, we might need more logic.
+        const spilled = range.getSpillingToRangeOrNullObject();
+        spilled.load(["isNullObject", "address", "rowCount", "columnCount", "worksheet"]); // Load spill details
+        try {
+          await context.sync(); // Sync 1: Check spill
+
+          if (!spilled.isNullObject) {
+            console.log(`[ExcelAIAssistant] Expanded chart range from anchor ${range.address} to spilled ${spilled.address}`);
+            range = spilled;
+          } else {
+            // Not actually spilling, fallback to anchor
+            range.load(["address", "rowCount", "columnCount", "worksheet"]);
+            await context.sync(); // Sync 2: Load anchor
+          }
+        } catch (spillError) {
+          console.warn(`[ExcelAIAssistant] Error loading spilled range, falling back to anchor:`, spillError);
+          range.load(["address", "rowCount", "columnCount", "worksheet"]);
+          await context.sync();
+        }
+      } else {
+        // Standard range loading
+        range.load(["address", "rowCount", "columnCount", "worksheet"]);
+        try {
+          await context.sync();
+        } catch (syncError) {
+          console.error(`[ExcelAIAssistant] Failed to sync range metadata for chart`, syncError);
+          throw new Error(`Chart Creation Failed: The range "${sourceRange}" is invalid or does not exist.`);
+        }
       }
 
       // Safety check: ensure we have data to plot
@@ -1044,7 +1134,8 @@ IMPORTANT:
         "areastacked": Excel.ChartType.areaStacked,
         "xyscatter": Excel.ChartType.xyscatter,
         "scatter": Excel.ChartType.xyscatter,
-        "combo": Excel.ChartType.columnClustered
+        "combo": Excel.ChartType.columnClustered, // Simplified fallback
+        "histogram": Excel.ChartType.histogram // New support
       };
 
       const excelChartType = chartTypeMap[type] || Excel.ChartType.columnClustered;
@@ -1062,11 +1153,11 @@ IMPORTANT:
           chart = sheet.charts.add(excelChartType, isSpilled ? `${range.address}#` : range, Excel.ChartSeriesBy.columns);
         } catch (innerE) {
           console.error(`[ExcelAIAssistant] Final chart creation failure:`, innerE);
-          throw innerE;
+          throw new Error(`Failed to create chart. Excel Error: ${innerE.message}`);
         }
       }
 
-      chart.title.text = title || "Chart";
+      chart.title.text = (title || "Chart").substring(0, 255); // Safeguard title length
       chart.title.visible = true;
 
       // Set axis titles if provided
@@ -1078,9 +1169,12 @@ IMPORTANT:
       }
 
       // Position: place it 2 rows below the data, same width
-      // We need to fetch range dimensions to do this nicely
-      const chartTop = range.getOffsetRange(range.rowCount + 2, 0);
-      chart.setPosition(chartTop, chartTop.getOffsetRange(15, 8)); // Approx 15 rows high, 8 cols wide
+      try {
+        const chartTop = range.getOffsetRange(range.rowCount + 2, 0);
+        chart.setPosition(chartTop, chartTop.getOffsetRange(15, 8)); // Approx 15 rows high, 8 cols wide
+      } catch (posError) {
+        console.warn("[ExcelAIAssistant] Could not position chart ideally, letting Excel decide.", posError);
+      }
 
       // Force data binding reset to ensure dynamic arrays are picked up
       try {
@@ -1092,7 +1186,12 @@ IMPORTANT:
 
       await context.sync();
 
-      return { status: 'success', chartId: chart.id, sheetName: sheet.name };
+      return {
+        status: "success",
+        type: chartType,
+        title: title,
+        sheet: sheet.name
+      };
     });
   }
 
